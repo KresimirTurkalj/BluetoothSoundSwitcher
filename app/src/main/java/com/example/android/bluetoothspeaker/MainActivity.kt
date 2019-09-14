@@ -1,135 +1,235 @@
 package com.example.android.bluetoothspeaker
 
 import android.Manifest
-import android.app.*
-import android.content.Context
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
+import android.os.Build.VERSION
 import android.os.Bundle
-import android.support.v4.app.ActivityCompat
-import android.support.v4.app.NotificationCompat
-import android.support.v7.app.AppCompatActivity
-import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 import kotlinx.android.synthetic.main.activity_main.*
+import android.content.Context
+import android.os.Build
+import com.example.android.bluetoothspeaker.services.BtForegroundService
+import android.app.ActivityManager
+import android.bluetooth.*
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.ParcelUuid
+import android.widget.Toast
+import java.util.*
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 
 class MainActivity : AppCompatActivity() {
 
-    companion object {
-        const val REQUEST_BT_PERMISSION = 1
+    companion object{
+        private val PERMISSION_LOCATION = 1
     }
 
-    private val pendingIntent: PendingIntent =
-        Intent(this, BluetoothIntentCheck::class.java).let { notificationIntent ->
-            PendingIntent.getActivity(this, 0, notificationIntent, 0)
+    private lateinit var serviceIntent: Intent
+
+    private val bluetoothAdapter by lazy {
+        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        bluetoothManager.adapter
+    }
+
+    private fun startScan() {
+        registerReceiver(broadcastReceiver, IntentFilter(BluetoothDevice.ACTION_FOUND))
+        registerReceiver(
+            broadcastReceiver,
+            IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+        )
+        registerReceiver(broadcastReceiver, IntentFilter(BluetoothDevice.ACTION_UUID))
+        pair_button.text = getString(R.string.turn_off_pair)
+        pair_button.isEnabled = false
+        search_button.isEnabled = false
+        bluetoothAdapter.startDiscovery()
+    }
+
+    private fun enableButtons() {
+        pair_button.text = getString(R.string.turn_on_pair)
+        pair_button.isEnabled = true
+        search_button.isEnabled = true
+        unregisterReceiver(broadcastReceiver)
+    }
+
+    private val bluetoothGattCallback = object : BluetoothGattCallback() {
+        override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+            Toast.makeText(this@MainActivity, rssi.toString(), Toast.LENGTH_SHORT).show()
         }
+    }
+    private val potentialDeviceList = mutableListOf<BluetoothDevice>()
+    private val broadcastReceiver = object : BroadcastReceiver() {
 
-    private var notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    private var notification: Notification = buildNotification()
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    if (intent.getIntExtra(
+                            BluetoothAdapter.EXTRA_STATE,
+                            BluetoothAdapter.ERROR
+                        ) == BluetoothAdapter.STATE_ON
+                    ) {
+                        startScan()
+                    }
+                }
+                BluetoothDevice.ACTION_FOUND -> {
+                    val bluetoothDevice: BluetoothDevice =
+                        intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+                    if(!potentialDeviceList.contains(bluetoothDevice)){
+                        potentialDeviceList.add(bluetoothDevice)
+                    }
+                }
+                BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                    checkForPairing()
+                }
+                BluetoothDevice.ACTION_UUID -> {
+                    val audioSinkUuid =
+                        ParcelUuid(UUID.fromString("0000110B-0000-1000-8000-00805F9B34FB"))
+                    val intentUuid =
+                        intent.getParcelableExtra<ParcelUuid>(BluetoothDevice.EXTRA_UUID)
+                    if (audioSinkUuid == intentUuid) {
+                        intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                            .createBond()
+                    }
+                    checkForPairing()
+                }
+            }
+        }
+    }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    private fun checkForPairing() {
+        if (potentialDeviceList.isNotEmpty()) {
+            pairNextDevice()
+        } else {
+            enableButtons()
+        }
+    }
+
+    private fun pairNextDevice() {
+        potentialDeviceList.first().fetchUuidsWithSdp()
+        potentialDeviceList.remove(potentialDeviceList.first())
+    }
+
+    public override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
         setupUI()
     }
 
     private fun setupUI() {
         createNotificationChannel()
-        button.setOnClickListener {
-            toggleButtonAndProcessState()
+        search_button.setOnClickListener {
+            toggleSearch()
+        }
+        pair_button.setOnClickListener {
+            checkLocationPermission()
+        }
+        serviceIntent = Intent(this, BtForegroundService::class.java)
+    }
+
+    private fun checkLocationPermission(){
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(this,getString(R.string.permission_explanation),Toast.LENGTH_LONG).show()
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                PERMISSION_LOCATION
+            )
+        }
+        else{
+            togglePair()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int,
+                                            permissions: Array<String>, grantResults: IntArray) {
+        when (requestCode) {
+            PERMISSION_LOCATION -> {
+                // If request is cancelled, the result arrays are empty.
+                if ((grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
+                    togglePair()
+                }
+                else{
+                    pair_button.text = getString(R.string.pair_on_permission_denied)
+                    pair_button.isEnabled = false
+                }
+                return
+            }
+            else -> {
+
+            }
         }
     }
 
     private fun createNotificationChannel() {
-        // Create the NotificationChannel, but only on API 26+ because
-        // the NotificationChannel class is new and not in the support library
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val name = getString(R.string.channel_id)
+        if (VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = getString(R.string.channel_name)
             val descriptionText = getString(R.string.channel_description)
-            val importance = NotificationManager.IMPORTANCE_HIGH
-            val channel = NotificationChannel(getString(R.string.channel_id), name, importance).apply {
-                description = descriptionText
-            }
-            // Register the channel with the system
-            notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val channel =
+                NotificationChannel(getString(R.string.channel_id), name, importance).apply {
+                    description = descriptionText
+                }
+            val notificationManager: NotificationManager =
+                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
     }
 
-    private fun buildNotification(): Notification {
-        return NotificationCompat.Builder(this, getString(R.string.channel_id))
-            .setContentTitle(getText(R.string.headline_text))
-            .setContentText(getText(R.string.process_off))
-            .setSmallIcon(R.drawable.stat_sys_data_no_bluetooth)
-            .setContentIntent(pendingIntent)
-            .build()
+    private fun togglePair() {
+        if (!isServiceRunning(this, BtForegroundService::class.java)) {
+            if (bluetoothAdapter != null) {
+                if (bluetoothAdapter.isEnabled) {
+                    startScan()
+                } else {
+                    bluetoothAdapter.enable()
+                    registerReceiver(
+                        broadcastReceiver,
+                        IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+                    )
+                }
+            }
+        } else {
+            Toast.makeText(this, "Can't search now.", Toast.LENGTH_SHORT).show()
+        }
     }
 
-    private fun toggleButtonAndProcessState() {
-        if (isServiceRunningInForeground(this, BluetoothIntentCheck::class.java)) {
+    private fun toggleSearch() {
+        if (isServiceRunning(this, BtForegroundService::class.java)) {
             switchOffProcess()
         } else {
             switchOnProcess()
         }
     }
 
-    private fun switchOffProcess() {
-        button.text = getString(R.string.turn_on)
-    }
-
-    private fun switchOnProcess() {
-        button.text = getString(R.string.turn_off)
-    }
-
-    private fun isServiceRunningInForeground(context: Context, serviceClass: Class<*>): Boolean {
-        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        for (service in manager.runningAppProcesses) {
-            if (serviceClass.name == service.processName) {
+    @Suppress("DEPRECATION")
+    private fun isServiceRunning(context: Context, serviceClass: Class<*>): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val services = activityManager.getRunningServices(Integer.MAX_VALUE)
+        for (runningServiceInfo in services) {
+            if (runningServiceInfo.service.className == serviceClass.name) {
                 return true
             }
         }
         return false
     }
 
-    private fun requestBluetoothPermissions() {
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN),
-            REQUEST_BT_PERMISSION
-        )
+    private fun switchOffProcess() {
+        imageView.setImageDrawable(getDrawable(R.drawable.bluetooth_off))
+        search_button.text = getString(R.string.turn_on_search)
+        stopService(serviceIntent)
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        if (requestCode == REQUEST_BT_PERMISSION) {
-            if (grantResults.size == 1 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(this, "Permissions granted!", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun pairBluetoothDevice() {
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.BLUETOOTH_ADMIN
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestBluetoothPermissions()
-        } else {
-            //TODO Pair with bluetooth device if it can be used as audio output
-        }
-    }
-
-    private fun setBluetoothConnection() {
-        if (ActivityCompat.checkSelfPermission(
-                this,
-                Manifest.permission.BLUETOOTH
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestBluetoothPermissions()
-        } else {
-            //TODO Set closest bluetooth audio output as device output
-        }
+    private fun switchOnProcess() {
+        imageView.setImageDrawable(getDrawable(R.drawable.bluetooth_on))
+        search_button.text = getString(R.string.turn_off_search)
+        startService(serviceIntent)
     }
 }

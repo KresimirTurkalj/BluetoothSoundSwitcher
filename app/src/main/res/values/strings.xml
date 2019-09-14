@@ -2,10 +2,20 @@
     <string name="app_name">Bluetooth sound surround</string>
     <string name="headline_text">Bluetooth zvučno okruženje</string>
     <string name="turn_on">Upali</string>
+    <string name="turn_on_search">Pokreni proces</string>
     <string name="turn_off">Ugasi</string>
+    <string name="turn_off_search">Pretraga…</string>
     <string name="process_on">Pretraživanje je uključeno</string>
     <string name="process_off">Pretraživanje je isključeno</string>
-    <string name="channel_id">miscellaneous</string>
+    <string name="channel_id">Bluetooth</string>
     <string name="channel_name">Miscellaneous</string>
+    <string name="process_started">Pokrenuta pretraga!</string>
+    <string name="process_ended">Zaustavljena pretraga!</string>
+    <string name="process_error">Error: BluetoothAdapter is null.</string>
     <string name="channel_description">Grupa za aplikaciju</string>
+    <string name="image_description">Ikona pretraživanja</string>
+    <string name="turn_on_pair">Pronađi uređaje</string>
+    <string name="turn_off_pair">Zaustavi pretragu</string>
+    <string name="permission_explanation">Permission is required for Bluetooth</string>
+    <string name="pair_on_permission_denied">Can\'t perform</string>
 </resources>
